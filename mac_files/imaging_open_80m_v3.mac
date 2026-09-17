@@ -1,0 +1,5 @@
+# v3 (real HDPE/Al collimator) production run, open mode.
+# 800 m standoff macro -- see README.md "Naming quirk" note: run only against a build
+# with ImagingDet::kStandoff set to 800.0 * m.
+/run/printProgress 2000000
+/run/beamOn 80000000
