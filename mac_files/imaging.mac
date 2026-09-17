@@ -1,0 +1,3 @@
+# 100 m standoff imaging run - aluminum case + tracker in one world, B = 0.1 G.
+# 31x7 tracker (9765 cm2 Si). Outputs: imaging_shadow.csv, imaging_shadow_stats.csv
+/run/beamOn 1000000000

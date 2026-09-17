@@ -1,0 +1,12 @@
+# collimator_export.mac
+# Batch-only export of the collimator concept geometry: two 1 m^2 silicon planes 10 cm apart,
+# with a 49%-open-area HDPE collimator (13x13 holes, 54 mm hole / 23 mm wall, 107 cm
+# deep) immediately upstream of the first plane. No uranium, no beam, no field -- this
+# macro only draws the geometry and writes it to a VRML file for offline viewing.
+# Deliberately named without "vis" so MAIN.cc routes it to plain batch execution instead
+# of the interactive Qt session.
+/vis/open VRML2FILE
+/vis/viewer/set/style surface
+/vis/viewer/set/auxiliaryEdge true
+/vis/drawVolume
+/vis/viewer/flush

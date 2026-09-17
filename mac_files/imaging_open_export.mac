@@ -1,0 +1,13 @@
+# imaging_open_export.mac
+# Batch-only VRML export of the full open-field imaging world (tracker + collimator +
+# trigger stage, whichever is currently built) -- NO uranium (filename contains
+# "imaging_open" -> Mode::kImagingOpen, which never builds the uranium slab), NO beam/
+# field needed since this only draws the geometry and writes it to a VRML file. Deliberately
+# does NOT contain "vis" so MAIN.cc's kVisMode check (line ~32) stays false even though it
+# contains "imaging_open" -- kImagingOpen alone already forces kVisMode false, routing this
+# to the plain batch-execute branch instead of an interactive Qt session.
+/vis/open VRML2FILE
+/vis/viewer/set/style surface
+/vis/viewer/set/auxiliaryEdge true
+/vis/drawVolume
+/vis/viewer/flush

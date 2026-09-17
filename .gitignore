@@ -1,0 +1,20 @@
+# Build output (compiled on the target machine, not shipped)
+/build/
+/build_viz/
+
+# Simulation output data (regenerated on the HPC side, not source)
+run_*/
+open_field/
+imaging_shadow*.csv
+imaging_open*.csv
+beam_sample_*.csv
+
+# Windows-specific campaign automation (not applicable on HPC/SLURM)
+*.ps1
+campaign_log*.txt
+chunk_*.log
+STOP_LOOP*
+CAMPAIGN_DONE*
+
+# MATLAB analysis (kept local, not part of the Geant4 sim source)
+imaging_analysis*.m

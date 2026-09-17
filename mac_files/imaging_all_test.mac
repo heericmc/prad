@@ -1,0 +1,2 @@
+# 100M-per-arm test, 1m2_v2 geometry at 100 m (shadow then open in one execution).
+/run/beamOn 100000000

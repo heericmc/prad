@@ -1,0 +1,19 @@
+# 100 m standoff imaging visualisation WITH uranium (the shadow case). Fires the EXACT
+# production beam: physical AP9 forward-hemisphere flux, PAD- and cos-incidence-angle-
+# weighted, E >= 200 MeV, 500 mrad acceptance cone, source +-400 mm. B = 0.1 G in +y.
+# Central protons reaching the uranium (z = -50 m) stop/scatter (the shadow); near-axis
+# ones reach the detector 100 m downstream. Most of the wide real flux leaves the
+# +-0.7 m world within a few metres of the source (real ~2e-4 efficiency).
+# View: side view (y-z plane), looking from +x.  Usage: MAIN.exe vis_imaging.mac
+/vis/open OGL 1200x600-0+0
+/vis/viewer/set/viewpointThetaPhi 90 0
+/vis/viewer/set/upVector 0 0 1
+/vis/viewer/set/style wireframe
+/vis/viewer/set/auxiliaryEdge true
+/vis/drawVolume
+/vis/scene/add/trajectories rich
+/vis/modeling/trajectories/create/drawByParticleID
+/vis/scene/endOfEventAction accumulate
+/tracking/storeTrajectory 1
+/vis/viewer/flush
+/run/beamOn 300

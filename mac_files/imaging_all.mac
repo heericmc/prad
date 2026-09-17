@@ -1,0 +1,3 @@
+# Combined shadow + open-field run (MAIN.exe runs it twice: uranium, then none).
+# 1m2_v2 tracker (31 x 7 staves, 10 mm CF y gaps, K13D2U 1.8). 2e9 events per arm.
+/run/beamOn 2000000000

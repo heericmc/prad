@@ -1,0 +1,4 @@
+# 100 m standoff open-field reference - tracker only (no uranium), B = 0.1 G.
+# Same beam as imaging.mac; no uranium = baseline. Efficiency ~2.5e-6 at 100 m.
+# Outputs: imaging_open.csv, imaging_open_stats.csv
+/run/beamOn 2000000000

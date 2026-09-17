@@ -1,0 +1,25 @@
+# Full 100 m imaging world (double-click default). OPEN FIELD — no uranium.
+# The world is 100 m long but only ~1.4 m wide, so it renders as a long thin box:
+# source plane at one end (z = -50 m), the 3-layer detector at the other (z = +50 m).
+# Its outline is drawn as a grey wireframe so the full 100 m extent is visible; zoom
+# into either end (scroll) to see the detector or the beam in detail.
+# Fires the EXACT production beam: real AP9 forward-hemisphere flux, angle-weighted,
+# E >= 200 MeV, 500 mrad cone, source +-400 mm. Most protons spray wide and leave the
+# box near the source (real ~2e-4 efficiency); near-axis ones cross to the detector.
+/vis/open OGL 1600x500-0+0
+/vis/viewer/set/upVector 0 1 0
+/vis/viewer/set/viewpointThetaPhi 90 0
+/vis/viewer/set/style surface
+/vis/viewer/set/auxiliaryEdge true
+# Draw the 100 m world box as a dim wireframe so its extent is obvious.
+/vis/geometry/set/visibility WorldLV 0 true
+/vis/geometry/set/forceWireframe WorldLV 0 true
+/vis/geometry/set/colour WorldLV 0 0.4 0.4 0.4 0.4
+/vis/drawVolume
+/vis/scene/add/axes 0 0 0 20 m
+/vis/scene/add/trajectories rich
+/vis/modeling/trajectories/create/drawByParticleID
+/vis/scene/endOfEventAction accumulate
+/tracking/storeTrajectory 1
+/vis/viewer/flush
+/run/beamOn 300

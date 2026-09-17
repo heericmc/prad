@@ -1,0 +1,3 @@
+# v3 (real HDPE collimator) production run, open mode.
+/run/printProgress 200000
+/run/beamOn 10000000
