@@ -819,44 +819,68 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         // distFromBack_mm are CUMULATIVE boundaries from the detector-facing end (zBack);
         // thickFrac is that zone's wall thickness as a fraction of the full kWallThick.
         //
-        // RE-SEGMENTED 2026-09-17 to uniform 1000 mm zones (was 500/1000/1000/1000/
-        // remainder) to match the widened kDesignDeg = 11.7 deg design (see that flag's
-        // history comment for the confusion-probability re-derivation behind the angle
-        // change). At 11.7 deg the front-section length shrinks to ~3.84 m and the total
-        // built length (incl. side shielding) to ~3.99 m, so there's only room for three
-        // full 1000 mm zones plus a ~994 mm remainder -- the old design's far ~0.20
-        // (20%) tier is dropped entirely since nothing in the new, shorter bore reaches
-        // the distance-from-detector regime that justified it. Fractions per zone are
-        // mapped from the previously-validated 8 deg/500-1500-2500-3500 mm taper by
-        // taking, for each NEW zone, the fraction the OLD taper used at that zone's
-        // NEAR edge (closest to the detector, hence highest flux/least self-collimation)
-        // -- a conservative re-binning, not a re-optimization, since it reuses the same
-        // validated distance-vs-thickness points rather than fitting new ones.
-        // **NOT YET RE-VALIDATED**: this is a first-pass re-segmentation, not a new
-        // WALL_TEST measurement -- re-run WALL_TEST=1 after building to confirm zero
-        // sub-200 MeV leakage in every zone before trusting it for a production run,
-        // exactly as the original 2026-09-15 taper was validated.
-        struct ZoneSpec { G4double distFromBack_mm; G4double thickFrac; };
-        const ZoneSpec kZones[] = {
-            { 1000.0 * mm, 1.00 },   // at the detector -- no self-collimation margin at all
-            { 2000.0 * mm, 0.75 },
-            { 3000.0 * mm, 0.50 },
-            { 1.0e9  * mm, 0.32 },   // far front -- sentinel, clipped to zFront below
+        // RE-SEGMENTED 2026-09-17 (first pass) to uniform 1000 mm zones, to match the
+        // widened kDesignDeg = 11.7 deg design -- SUPERSEDED same day, see the next note:
+        // holding the near-detector (100%) zone at full thickness for a full 1000 mm
+        // instead of the original design's 500 mm cost ~836 kg on its own, which very
+        // nearly cancelled the mass saved by the shorter bore (net +121 kg vs the 8 deg
+        // design, despite being 1.82 m shorter) -- not all length costs the same mass,
+        // since the near-detector zone's cross-section is far larger than the far zones'.
+        //
+        // RE-DESIGNED 2026-09-17 (second pass, same day): segmented far more finely, in
+        // 200 mm steps, with the thickness fraction interpolated LINEARLY between the
+        // same validated anchor points from the original 8 deg/500-1500-2500-3500 mm
+        // taper (0mm->100%, 500mm->75%, 1500mm->50%, 2500mm->32%, 3500mm->20%, held flat
+        // beyond 3500 mm -- no data past that point) instead of holding each old bin's
+        // value constant across a whole new 1000 mm zone. Each 200 mm zone uses the
+        // fraction at its NEAR edge (closest to the detector, highest flux) for the same
+        // conservative-rebinning reason as the first pass. Result: 3.07 t (20 zones) vs
+        // 4.18 t (4 zones/1000mm) -- 27% lighter, and 24% lighter than the original
+        // 8 deg/5-zone design (4.06 t) despite the wider FOV. Zone count and lengths are
+        // DERIVED from totalLen (itself derived from kDesignDeg), not hardcoded, so this
+        // stays correct automatically if the design angle changes again.
+        // **NOT YET RE-VALIDATED**: still a first-pass interpolation of the previously
+        // measured anchor points, not a fresh WALL_TEST measurement at these finer
+        // boundaries -- re-run WALL_TEST=1 after building to confirm zero sub-200 MeV
+        // leakage in every zone before trusting it for a production run.
+        struct ThickAnchor { G4double dist_mm; G4double frac; };
+        const ThickAnchor kAnchors[] = {
+            {    0.0 * mm, 1.00 },
+            {  500.0 * mm, 0.75 },
+            { 1500.0 * mm, 0.50 },
+            { 2500.0 * mm, 0.32 },
+            { 3500.0 * mm, 0.20 },   // held flat beyond this point -- no data past here
         };
-        const G4int nZones = sizeof(kZones) / sizeof(kZones[0]);
+        const G4int nAnchors = sizeof(kAnchors) / sizeof(kAnchors[0]);
+        auto thickFracAt = [&](G4double distFromDetector_mm) -> G4double {
+            if (distFromDetector_mm <= kAnchors[0].dist_mm) return kAnchors[0].frac;
+            for (G4int i = 0; i < nAnchors - 1; ++i) {
+                if (distFromDetector_mm >= kAnchors[i].dist_mm &&
+                    distFromDetector_mm <= kAnchors[i + 1].dist_mm) {
+                    const G4double t = (distFromDetector_mm - kAnchors[i].dist_mm)
+                                      / (kAnchors[i + 1].dist_mm - kAnchors[i].dist_mm);
+                    return kAnchors[i].frac + t * (kAnchors[i + 1].frac - kAnchors[i].frac);
+                }
+            }
+            return kAnchors[nAnchors - 1].frac;   // held flat beyond the last anchor
+        };
+
         const G4double totalLen = zBack - zFront;
+        constexpr G4double kZoneStep = 200.0 * mm;
+        const G4int nZones = G4int(std::ceil(totalLen / kZoneStep));
         constexpr G4double kZoneEps = 0.01 * mm;   // tiny shrink per zone so joins don't overlap
 
         fCollTubeWallZones_LV.clear();
         G4double prevD = 0.0;
         G4double reportMaxOuter = 0.0;
         for (G4int iz = 0; iz < nZones; ++iz) {
-            const G4double thisD = std::min(kZones[iz].distFromBack_mm, totalLen);
-            if (thisD <= prevD) continue;   // sentinel already exceeded by an earlier zone
-            const G4double zoneLen  = thisD - prevD;
+            const G4double thisD = std::min(prevD + kZoneStep, totalLen);
+            if (thisD <= prevD) break;
+            const G4double zoneLen   = thisD - prevD;
             const G4double zoneHalfZ = zoneLen / 2.0 - kZoneEps;
-            const G4double zCentre  = zBack - (prevD + thisD) / 2.0;
-            const G4double outerHXY = CollTube::kBoreHalfXY + kZones[iz].thickFrac * CollTube::kWallThick;
+            const G4double zCentre   = zBack - (prevD + thisD) / 2.0;
+            const G4double thickFrac = thickFracAt(prevD);   // near-edge (conservative) value
+            const G4double outerHXY  = CollTube::kBoreHalfXY + thickFrac * CollTube::kWallThick;
             reportMaxOuter = std::max(reportMaxOuter, outerHXY);
 
             const G4String tag = "TubeZone" + std::to_string(iz);
@@ -866,8 +890,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
             auto* solid = new G4SubtractionSolid(tag, outer, bore);
             auto* lv = new G4LogicalVolume(solid, collMat, tag + "LV");
             auto* vis = new G4VisAttributes(CollTube::kAlWall
-                ? G4Colour(0.55 + 0.30*kZones[iz].thickFrac, 0.60, 0.65, 1.0)
-                : G4Colour(0.65 + 0.30*kZones[iz].thickFrac, 0.65, 0.45, 1.0));
+                ? G4Colour(0.55 + 0.30*thickFrac, 0.60, 0.65, 1.0)
+                : G4Colour(0.65 + 0.30*thickFrac, 0.65, 0.45, 1.0));
             vis->SetForceSolid(true);
             lv->SetVisAttributes(vis);
             // Every zone shares the SAME PV name (TrackerSD's planeID lookup keys on name,
@@ -876,8 +900,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
                               "V3CollimatorTubePV", worldLV, false, iz, true);
             fCollTubeWallZones_LV.push_back(lv);
 
-            G4cout << "[Det]   tube zone " << iz << ": " << kZones[iz].thickFrac*100 << "% ("
-                   << kZones[iz].thickFrac*CollTube::kWallThick/mm << " mm), "
+            G4cout << "[Det]   tube zone " << iz << ": " << thickFrac*100 << "% ("
+                   << thickFrac*CollTube::kWallThick/mm << " mm), "
                    << zoneLen/mm << " mm long, " << prevD/mm << "-" << thisD/mm
                    << " mm from detector" << G4endl;
             prevD = thisD;

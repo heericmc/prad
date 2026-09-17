@@ -159,9 +159,17 @@ a single `n_fired` column (total primaries fired) — needed to combine/merge ch
 
 - 2 Si tracking layers, 100 mm apart (`Det::` namespace in `DetectorConstruction.cc`) —
   chosen so the pixel-resolution term (`sigma_pos`) is subdominant to multiple scattering.
-- Al tube-taper collimator, `CollTube::kDesignDeg = 11.7` (deg), 4-zone mass-optimized
-  taper on uniform 1000 mm zones (see `DetectorConstruction.cc`'s `ZoneSpec` table in
-  the `kCollStyle==kTube` branch). Bore ±562 mm, total length ≈3.99 m, mass ≈4.18 t.
+- Al tube-taper collimator, `CollTube::kDesignDeg = 11.7` (deg), 20-zone mass-optimized
+  taper in 200 mm steps, thickness linearly interpolated between the original 8 deg
+  design's validated anchor points (see `DetectorConstruction.cc`'s `thickFracAt`
+  lambda in the `kCollStyle==kTube` branch — zone count/lengths are derived from the
+  built length, not hardcoded). Bore ±562 mm, total length ≈3.99 m, mass ≈**3.07 t**.
+  (An earlier same-day pass re-segmented to uniform 1000 mm zones instead, which came
+  out to 4.18 t — *heavier* than the retired 8 deg/5-zone design at 4.06 t, because
+  holding the near-detector 100%-thickness zone at a full 1000 mm instead of the
+  original 500 mm cost more mass than the shorter bore saved. The 200 mm/interpolated
+  taper fixes this: 27% lighter than that 1000 mm version and 24% lighter than the
+  original 8 deg design, despite the wider FOV.)
   **2026-09-17: widened from 8 deg** — the 8 deg point was originally justified by a
   two-plane track-confusion probability calc that used the wrong plane spacing
   (2 cm instead of this repo's actual 10 cm); re-derived correctly, bare two-plane

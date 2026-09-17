@@ -1,6 +1,7 @@
 # Build output (compiled on the target machine, not shipped)
 /build/
 /build_viz/
+/build_sanity/
 
 # Simulation output data (regenerated on the HPC side, not source)
 run_*/
