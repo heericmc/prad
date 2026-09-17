@@ -2,7 +2,7 @@
 
 Geant4 Monte Carlo for OST proton radiography: a 2-Si-tracking-layer variant (layers
 100 mm apart, vs. the main project's 3-layer/20 mm design) with an Al tube-taper
-collimator (8 deg design angle) and an X-Y strip hodoscope trigger stage. This repo is
+collimator (11.7 deg design angle) and an X-Y strip hodoscope trigger stage. This repo is
 **source only** — no build output, no simulation results. It was pushed from a Windows
 dev machine specifically to be built and run on MIT ORCD HPC.
 
@@ -159,12 +159,25 @@ a single `n_fired` column (total primaries fired) — needed to combine/merge ch
 
 - 2 Si tracking layers, 100 mm apart (`Det::` namespace in `DetectorConstruction.cc`) —
   chosen so the pixel-resolution term (`sigma_pos`) is subdominant to multiple scattering.
-- Al tube-taper collimator, `CollTube::kDesignDeg = 8.0` (deg), 5-zone mass-optimized
-  taper (see `DetectorConstruction.cc`'s `ZoneSpec` table in the `kCollStyle==kTube`
-  branch).
+- Al tube-taper collimator, `CollTube::kDesignDeg = 11.7` (deg), 4-zone mass-optimized
+  taper on uniform 1000 mm zones (see `DetectorConstruction.cc`'s `ZoneSpec` table in
+  the `kCollStyle==kTube` branch). Bore ±562 mm, total length ≈3.99 m, mass ≈4.18 t.
+  **2026-09-17: widened from 8 deg** — the 8 deg point was originally justified by a
+  two-plane track-confusion probability calc that used the wrong plane spacing
+  (2 cm instead of this repo's actual 10 cm); re-derived correctly, bare two-plane
+  confusion needs ≈3.56 deg to meet the 10⁻³ ceiling on its own, but the *actual* built
+  design also requires the X-Y strip hodoscope to register a **position-matched** hit
+  (not just "some strip fired") as a required third confirmation, and that compound
+  probability meets the same ceiling out to ≈11.7 deg — see
+  `maps-pileup-collimation.md` §3a for the full derivation. **The strip hodoscope's
+  position match is therefore load-bearing for this design, not optional**: the
+  analysis pipeline must check that the fired `stripx_id`/`stripy_id` cell is
+  consistent with the extrapolated plane0→plane1 track, not merely require a
+  hodoscope coincidence. **The re-segmented taper has not yet been re-validated with a
+  fresh `WALL_TEST=1` run** — do this before trusting it for a production campaign.
 - X-Y strip hodoscope trigger stage (1 cm plastic scintillator strips) instead of the
   main project's poly-filter + single scintillator slab.
 - `COLLIMATOR_DEG` env var (default matches `CollTube::kDesignDeg` in source, currently
-  8) sets the source-term sampling half-angle for `PrimaryGeneratorAction` — this is a
-  *sampling* efficiency knob, not the collimator's physical acceptance, which is set by
-  the real geometry above.
+  11.7) sets the source-term sampling half-angle for `PrimaryGeneratorAction` — this is
+  a *sampling* efficiency knob, not the collimator's physical acceptance, which is set
+  by the real geometry above.

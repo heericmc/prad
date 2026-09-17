@@ -217,12 +217,40 @@ namespace CollTube {
     // exactly how large N ends up being: alpha = 8.01 deg, pn(5 deg) = 1.5e-4 by
     // comparison. Widening 5 -> 8 deg raises the whole-detector rate (Sec.9 of that
     // document) from ~15.7 to ~34 hits/us -- still using the same idealized flat-aperture
-    // estimate documented there as a conservative upper bound, not a measurement. The
-    // 5-zone mass-optimized taper below is unaffected in its near-detector zones (all
-    // defined as distance-from-detector, independent of total length, see the ZoneSpec
-    // comment) -- only the final (already most-conservative, already-validated-to-zero-
-    // leakage-beyond-~4.3m) far zone gets shorter as the bore shrinks with the wider angle.
-    constexpr G4double kDesignDeg  = 8.0;
+    // estimate documented there as a conservative upper bound, not a measurement.
+    // SUPERSEDED 2026-09-17 -- see the next note: the pn(alpha)=8.01deg solve above used
+    // d = 2 cm (the ORIGINAL 3-layer/20mm project's layer pitch), not this repo's actual
+    // d = Det::kTwoLayerGapZ = 10 cm. Left in place only as a record of the (invalid)
+    // reasoning that originally picked 8 deg.
+    //
+    // 2026-09-17: re-derived correctly with d = 10 cm and, more importantly, with the
+    // ceiling now binding on the REAL 3-point confirmation this design actually enforces
+    // -- both Si planes AND a position-matched hit in the StripHodo trigger stage (not
+    // just "some strip fired": Analysis must check the fired stripx_id/stripy_id cell is
+    // consistent with the extrapolated plane0->plane1 track; see maps-pileup-collimation.md
+    // Sec.3a for the CSV columns this needs). Two independent probabilities multiply,
+    // since the tracker-plane and hodoscope accidental hits come from separate,
+    // uncorrelated background protons:
+    //   pn_2plane(alpha) = X_unshielded * f(alpha) * tau * pi * alpha_rad^2 * d^2   (d=10cm)
+    //   p_strip(alpha)   = X_unshielded * f(alpha) * tau * A_cell                   (A_cell=1cm^2)
+    //   pn_3point(alpha) = pn_2plane(alpha) * p_strip(alpha)
+    // Solving pn_3point(alpha) = 1e-3 (three independent methods again -- direct
+    // bisection, a narrower-bracket bisection, and a closed-form alpha^4-anchored fit --
+    // agreeing to 0.01 deg) gives alpha = 11.72 deg. At the OLD 8 deg point, pn_3point was
+    // already comfortably under the ceiling (1.0e-4, 10x margin) -- this widening spends
+    // that margin on a shorter, lighter-per-unit-length (though not lighter overall, see
+    // the ZoneSpec comment below) bore instead of leaving it unused. Bare two-plane
+    // confusion at 11.72 deg is 0.115 (11.5%) -- far over the two-plane-only ceiling on
+    // its own -- so the strip hodoscope's position match is now LOAD-BEARING, not optional
+    // insurance: this design's confusion-ceiling claim is only true if the analysis
+    // actually enforces that position match, not merely a "hodoscope fired" flag.
+    // Length scales as 1/tan(angle), so this shrinks the front-section bore from ~5.66 m
+    // (8 deg) to ~3.83 m (11.72 deg); the ZoneSpec taper below was re-segmented to match
+    // (see that comment) -- **NOT YET RE-VALIDATED with a fresh WALL_TEST run** (the
+    // zero-sub-200-MeV-leakage claim for the previous 8 deg/5-zone taper doesn't
+    // automatically carry over to new zone boundaries; re-run WALL_TEST=1 after building
+    // this before trusting it for a production campaign).
+    constexpr G4double kDesignDeg  = 11.7;
     // 2026-09-14: HDPE -> aluminum, to use less material. NIST PSTAR: 12.4 cm of Al stops
     // protons <=200 MeV (vs 25 cm of HDPE for the same cutoff) -- Al is ~2x denser (2.70 vs
     // ~0.94-0.97 g/cm^3) so it wins on LINEAR range despite a somewhat worse per-gram
@@ -790,15 +818,30 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         // remaining bore length without clipping another zone to ever reach the tracker.
         // distFromBack_mm are CUMULATIVE boundaries from the detector-facing end (zBack);
         // thickFrac is that zone's wall thickness as a fraction of the full kWallThick.
-        // FIRST-PASS design from one diagnostic run, not yet iterated to convergence --
-        // re-run the wall-test beam after any change to confirm zero sub-200 MeV leakage.
+        //
+        // RE-SEGMENTED 2026-09-17 to uniform 1000 mm zones (was 500/1000/1000/1000/
+        // remainder) to match the widened kDesignDeg = 11.7 deg design (see that flag's
+        // history comment for the confusion-probability re-derivation behind the angle
+        // change). At 11.7 deg the front-section length shrinks to ~3.84 m and the total
+        // built length (incl. side shielding) to ~3.99 m, so there's only room for three
+        // full 1000 mm zones plus a ~994 mm remainder -- the old design's far ~0.20
+        // (20%) tier is dropped entirely since nothing in the new, shorter bore reaches
+        // the distance-from-detector regime that justified it. Fractions per zone are
+        // mapped from the previously-validated 8 deg/500-1500-2500-3500 mm taper by
+        // taking, for each NEW zone, the fraction the OLD taper used at that zone's
+        // NEAR edge (closest to the detector, hence highest flux/least self-collimation)
+        // -- a conservative re-binning, not a re-optimization, since it reuses the same
+        // validated distance-vs-thickness points rather than fitting new ones.
+        // **NOT YET RE-VALIDATED**: this is a first-pass re-segmentation, not a new
+        // WALL_TEST measurement -- re-run WALL_TEST=1 after building to confirm zero
+        // sub-200 MeV leakage in every zone before trusting it for a production run,
+        // exactly as the original 2026-09-15 taper was validated.
         struct ZoneSpec { G4double distFromBack_mm; G4double thickFrac; };
         const ZoneSpec kZones[] = {
-            {  500.0 * mm, 1.00 },   // at the detector -- no self-collimation margin at all
-            { 1500.0 * mm, 0.75 },
-            { 2500.0 * mm, 0.50 },
-            { 3500.0 * mm, 0.32 },
-            { 1.0e9  * mm, 0.20 },   // far front -- sentinel, clipped to zFront below
+            { 1000.0 * mm, 1.00 },   // at the detector -- no self-collimation margin at all
+            { 2000.0 * mm, 0.75 },
+            { 3000.0 * mm, 0.50 },
+            { 1.0e9  * mm, 0.32 },   // far front -- sentinel, clipped to zFront below
         };
         const G4int nZones = sizeof(kZones) / sizeof(kZones[0]);
         const G4double totalLen = zBack - zFront;

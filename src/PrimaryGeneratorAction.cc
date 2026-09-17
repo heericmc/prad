@@ -94,10 +94,16 @@ PrimaryGeneratorAction::PrimaryGeneratorAction()
     // 5 -> 8 deg (re-derived from the pn=1e-3 confusion-probability bound, see that flag's
     // comment); a run launched without explicitly setting COLLIMATOR_DEG would otherwise
     // silently under-sample this bore.
+    // 2026-09-17: default fallback 8.0 -> 11.7 to match CollTube::kDesignDeg's re-derived
+    // widening 8 -> 11.7 deg (the confusion-probability ceiling was re-solved correctly
+    // with d = 10 cm AND the required strip-hodoscope position match counted as a third
+    // confirmation -- see that flag's history comment in DetectorConstruction.cc). Same
+    // under-sampling risk as the 2026-09-16 note applies if this drifts from the built
+    // CollTube::kDesignDeg value.
     G4cout << "[PGA] Standoff = " << standoff / m << " m"
            << "  detector x = " << fMeanDxBend_mm << " mm"
            << "  source ±"      << fSrcHX / mm     << " mm"
-           << "  COLLIMATOR_DEG = " << (collEnv ? std::atof(collEnv) : 8.0) << G4endl;
+           << "  COLLIMATOR_DEG = " << (collEnv ? std::atof(collEnv) : 11.7) << G4endl;
 }
 
 PrimaryGeneratorAction::~PrimaryGeneratorAction()
@@ -432,7 +438,10 @@ void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event)
     static const G4double kHalfPi = std::acos(-1.0) / 2.0;
     static const G4double kCollimatorRad = [] {
         const char* e = std::getenv("COLLIMATOR_DEG");
-        return (e ? std::atof(e) : 8.0) * (std::acos(-1.0) / 180.0);
+        // 2026-09-17: default 8.0 -> 11.7, matching CollTube::kDesignDeg's re-derived
+        // widening -- see the constructor's dated comment above and
+        // DetectorConstruction.cc's CollTube::kDesignDeg history.
+        return (e ? std::atof(e) : 11.7) * (std::acos(-1.0) / 180.0);
     }();
 
     const bool isOpen = (DetectorConstruction::GetMode() == DetectorConstruction::Mode::kImagingOpen);
