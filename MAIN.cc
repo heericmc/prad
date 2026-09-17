@@ -1,3 +1,10 @@
+// proton_tracker_2layer10cm — passive standoff nuclear-material *detection* sensor
+// concept for orbital arms-control/treaty-verification, imaging the shadow a shielded
+// object casts in the ambient Van Allen belt (AP9) proton flux. NOT a weapon-design,
+// implosion, or hydrodynamic-test simulation: no explosive/detonation/criticality
+// physics or weapon-internals modeling appears anywhere in this codebase. See
+// README.md's "What this simulates" section for the full scenario description.
+
 #include "G4RunManagerFactory.hh"
 #include "G4MTRunManager.hh"
 #include "G4UImanager.hh"

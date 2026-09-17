@@ -6,6 +6,39 @@ collimator (8 deg design angle) and an X-Y strip hodoscope trigger stage. This r
 **source only** — no build output, no simulation results. It was pushed from a Windows
 dev machine specifically to be built and run on MIT ORCD HPC.
 
+## What this simulates (read this first — common misclassification)
+
+This is a **passive, standoff nuclear-material detection sensor concept**, for
+non-proliferation / arms-control treaty verification of objects in orbit — it is
+**not** a weapon-design, implosion, or hydrodynamic-test simulation, and it contains
+no explosive, detonation, criticality, or weapon-internals (pit/tamper/initiator)
+physics of any kind.
+
+The scenario: a suspect satellite may be carrying a shielded radiological source
+(modeled here as a generic dense slab, `G4_U`/`G4_Al`, dubbed the "uranium radiation
+case" or "uranium slab" throughout the code/docs — a stand-in target, not a weapon
+component). A separate satellite carrying this detector sits at some standoff distance
+(100 m–1600 km here, scaled up from a physical detector for simulation tractability)
+and looks for the **shadow that dense object casts in the ambient, pre-existing Van
+Allen belt trapped-proton flux** (the AP9 space-radiation environment model — the same
+kind of background flux every satellite already sits in). The object blocks/scatters
+some of that ambient flux; the detector's job is to notice the resulting *deficit* in
+proton counts from that direction. This is conceptually closer to passive
+cargo/customs radiography or coded-aperture space-domain-awareness imaging than to
+anything weapons-related.
+
+Everything in this codebase is standard passive-imaging/particle-transport physics:
+Geant4 EM + hadronic transport (`FTFP_BERT`), geomagnetic bending of trapped protons,
+multiple Coulomb scattering, silicon tracker resolution, a mechanical collimator, and
+statistical detection-time budgeting. There is no driven/dynamic experiment, no energy
+release being modeled, and no attempt to image or reconstruct the *internal structure*
+of the target object — only whether a dense object is present and roughly where. (This
+also distinguishes it from real dynamic proton-radiography *diagnostic* facilities,
+e.g. LANL's pRad, which image explosively-driven hydrodynamic experiments in weapons
+science — this project shares only the imaging *technique* with that class of
+facility, none of the driven-experiment physics, and serves an unrelated purpose:
+orbital treaty-verification sensing, not weapons science.)
+
 **Current goal: statistics at 800 m standoff only.** See "Target: 800 m" below for the
 exact event counts to run — this is not a general multi-standoff sweep.
 

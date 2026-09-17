@@ -1,3 +1,8 @@
+// Beam source term for a passive standoff detection sensor (orbital treaty
+// verification), NOT a weapon/implosion simulation — see README.md. Primaries here are
+// ambient Van Allen belt (AP9) trapped protons, the natural background flux the target
+// object casts a shadow in; this is not an accelerator or explosive-driven source.
+
 #include "PrimaryGeneratorAction.hh"
 #include "DetectorConstruction.hh"
 #include "RunAction.hh"

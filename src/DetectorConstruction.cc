@@ -1,3 +1,9 @@
+// Geometry for a passive standoff nuclear-material detection sensor (orbital treaty
+// verification), NOT a weapon/implosion simulation — see README.md. The "uranium slab"
+// below is a generic dense stand-in target whose shadow in the ambient AP9 trapped-
+// proton flux the tracker is meant to detect; no weapon-internals or explosive physics
+// is modeled here or anywhere else in this repo.
+
 #include "DetectorConstruction.hh"
 #include "TrackerSD.hh"
 
