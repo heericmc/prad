@@ -26,9 +26,63 @@
 #include <cstdlib>
 #include <limits>
 #include <utility>
+#include <atomic>
 
 // Vis-only flag: set by MAIN.cc before Initialize() (see header).
 bool PrimaryGeneratorAction::sVisMode = false;
+
+// Candidate counters for the real-time normalisation (see the header's SAMPLING note).
+// Each worker accumulates locally within an event and adds once per event, so the atomics
+// see one update per event, not one per candidate. Reset by the master's BeginOfRunAction,
+// read by its EndOfRunAction after every worker has finished.
+namespace {
+    std::atomic<unsigned long long> gNCand{0};
+    std::atomic<unsigned long long> gNRef{0};
+    constexpr G4double kBField_T = 0.1e-4;   // mirrors ImagingDet::kBField (0.1 G along +y)
+    constexpr G4double kMp_MeV   = 938.272;
+}
+
+PrimaryGeneratorAction::Sampling PrimaryGeneratorAction::GetSampling()
+{
+    static const Sampling s = [] {
+        const char* e = std::getenv("SAMPLING");
+        const std::string v = e ? e : "legacy";
+        if (v == "legacy")  return Sampling::kLegacy;
+        if (v == "all")     return Sampling::kAll;
+        if (v == "split")   return Sampling::kSplit;
+        if (v == "direct")  return Sampling::kDirect;
+        if (v == "uranium") return Sampling::kUranium;
+        G4Exception("PrimaryGeneratorAction", "BadSampling", FatalException,
+                    ("SAMPLING must be legacy|all|split|direct|uranium, not '" + v + "'").c_str());
+        return Sampling::kLegacy;
+    }();
+    return s;
+}
+
+const char* PrimaryGeneratorAction::SamplingName()
+{
+    switch (GetSampling()) {
+        case Sampling::kLegacy:  return "legacy";
+        case Sampling::kAll:     return "all";
+        case Sampling::kSplit:   return "split";
+        case Sampling::kDirect:  return "direct";
+        case Sampling::kUranium: return "uranium";
+    }
+    return "?";
+}
+
+G4double PrimaryGeneratorAction::RefConeDeg()
+{
+    static const G4double r = [] {
+        const char* e = std::getenv("REF_CONE_DEG");
+        return e ? std::atof(e) : 1.0;
+    }();
+    return r;
+}
+
+void PrimaryGeneratorAction::ResetCounters() { gNCand = 0; gNRef = 0; }
+unsigned long long PrimaryGeneratorAction::NCandidates() { return gNCand.load(); }
+unsigned long long PrimaryGeneratorAction::NRef()        { return gNRef.load(); }
 
 // Line-of-sight pitch angle: angle between the target-detector line and the local B
 // field (here +y). The narrow FOV means every detected proton has this pitch angle, so
@@ -104,6 +158,37 @@ PrimaryGeneratorAction::PrimaryGeneratorAction()
            << "  detector x = " << fMeanDxBend_mm << " mm"
            << "  source ±"      << fSrcHX / mm     << " mm"
            << "  COLLIMATOR_DEG = " << (collEnv ? std::atof(collEnv) : 11.7) << G4endl;
+
+    // SAMPLING=direct pre-cone. The widest direction that can possibly reach the
+    // collimator+tracker envelope comes from a source corner aimed at the far side of the
+    // envelope, plus the largest (200 MeV) bend; the pre-cone must contain it (else
+    // triggers are silently lost) and the reference cone (else n_ref is wrong).
+    {
+        const G4double d      = fZdet - fZsrc;
+        const G4double envR   = std::max({ DetectorConstruction::GetCollOuterHalfXY_mm(),
+                                           DetectorConstruction::GetActiveHalfX_mm(),
+                                           DetectorConstruction::GetActiveHalfY_mm() }) * mm;
+        const G4double pMin   = std::sqrt(200. * (200. + 2.*kMp_MeV));
+        const G4double rgMin  = pMin / (299.792 * kBField_T) * m;
+        const G4double bend   = d * d / (2. * rgMin);
+        const G4double geoMax = std::atan((std::sqrt(2.) * fSrcHX + std::abs(fMeanDxBend_mm) * mm
+                                           + envR + 100.*mm + bend) / d);
+        const G4double refRad = RefConeDeg() * deg;
+        const char* dc = std::getenv("DIRECT_CONE_DEG");
+        fDirectConeRad = dc ? std::atof(dc) * deg : std::max(2.0 * geoMax, 1.25 * refRad);
+        if (GetSampling() != Sampling::kLegacy)
+            G4cout << "[PGA] SAMPLING = " << SamplingName()
+                   << "  ref cone = " << RefConeDeg() << " deg"
+                   << "  direct pre-cone = " << fDirectConeRad / deg << " deg"
+                   << " (geometric max " << geoMax / deg << " deg)" << G4endl;
+        if (GetSampling() == Sampling::kDirect && (fDirectConeRad < geoMax || fDirectConeRad < refRad))
+            G4Exception("PrimaryGeneratorAction", "DirectConeTooNarrow", FatalException,
+                        "DIRECT_CONE_DEG must contain both the geometric reach and REF_CONE_DEG.");
+        const bool open = (DetectorConstruction::GetMode() == DetectorConstruction::Mode::kImagingOpen);
+        if (GetSampling() == Sampling::kUranium && open)
+            G4Exception("PrimaryGeneratorAction", "UraniumInOpen", FatalException,
+                        "SAMPLING=uranium is meaningless for the open-field run (no uranium).");
+    }
 }
 
 PrimaryGeneratorAction::~PrimaryGeneratorAction()
@@ -317,7 +402,7 @@ void PrimaryGeneratorAction::LoadPAD(const G4String& filename)
         return (1. - w) * lo->second + w * hi->second;
     };
 
-    fPitchGrid.clear(); fPitchCDF.clear();
+    fPitchGrid.clear(); fPitchCDF.clear(); fPadJ.clear(); fPadJMax = 0.;
     G4double cum = 0.; G4double prevA = 40., prevJ = 0.;
     for (G4double a = 40.; a <= 140.0001; a += 0.5) {
         // Weight J(alpha) by sin(alpha): a pitch ring subtends 2*pi*sin(alpha)*d(alpha)
@@ -328,6 +413,8 @@ void PrimaryGeneratorAction::LoadPAD(const G4String& filename)
         cum += 0.5 * (J + prevJ) * (a - prevA);
         fPitchGrid.push_back(a);
         fPitchCDF.push_back(cum);
+        fPadJ.push_back(Jinterp(a));
+        fPadJMax = std::max(fPadJMax, Jinterp(a));
         prevA = a; prevJ = J;
     }
     if (cum <= 0.)
@@ -413,6 +500,8 @@ void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event)
     }();
     if (kWallTest) { GenerateWallTestBeam(event); return; }
 
+    if (GetSampling() != Sampling::kLegacy) { GenerateCountedBeam(event); return; }
+
     // Physical AP9 flux, collimator-aware source term (2026-09-10 redesign; widened to 2
     // deg and paired with a REAL HDPE lattice collimator, Det::kHasCollimator /
     // CollV3 in DetectorConstruction.cc, as of the "v3" redefinition same day). When the
@@ -452,9 +541,17 @@ void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event)
     const G4double ys = (2.*G4UniformRand() - 1.) * srcHX;
     const G4ThreeVector pos(xs, ys, fZsrc);
 
+    // Legacy runs are counted too (one candidate per event, reference-cone test on the
+    // direction as drawn, i.e. BEFORE the shadow run's redirect). For the open run this
+    // reproduces the analysis' J_3D*Omega_cone normalisation; for the shadow run it gives
+    // the real time the uranium-branch (full-PAD) protons actually represent, exposing how
+    // far that differs from the open-run scale the analysis applies to the whole run.
+    const G4double cosRef = std::cos(RefConeDeg() * deg);
     G4ThreeVector dir;
     if (isOpen) {
         dir = SampleNarrowConeDir(kCollimatorRad);
+        gNCand += 1;
+        if (dir.z() >= cosRef) gNRef += 1;
     } else {
         int guard = 0; bool ok = false;
         do {
@@ -464,6 +561,8 @@ void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event)
             ok = (G4UniformRand() <= dir.z());   // cos-incidence accept
         } while (!ok && ++guard < 100000);
         if (!ok) return;
+        gNCand += 1;
+        if (dir.z() >= cosRef) gNRef += 1;
 
         if (!WouldHitUranium(pos, dir)) dir = SampleNarrowConeDir(kCollimatorRad);
     }
@@ -473,6 +572,141 @@ void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event)
     fGun->SetParticleEnergy(E * MeV);
     fGun->GeneratePrimaryVertex(event);
     DumpBeamSample(xs, ys, fZsrc, E, dir.unit());
+}
+
+G4double PrimaryGeneratorAction::PadJ(G4double alphaDeg) const
+{
+    // Linear interpolation of J(alpha) on the same 0.5 deg grid LoadPAD built the pitch
+    // CDF on; zero outside [40, 140] deg, exactly like the hemisphere sampler.
+    if (fPitchGrid.size() < 2 || alphaDeg < fPitchGrid.front() || alphaDeg > fPitchGrid.back())
+        return 0.;
+    const G4double step = fPitchGrid[1] - fPitchGrid[0];
+    std::size_t i = std::min<std::size_t>(std::size_t((alphaDeg - fPitchGrid.front()) / step),
+                                          fPitchGrid.size() - 2);
+    const G4double w = (alphaDeg - fPitchGrid[i]) / step;
+    return (1. - w) * fPadJ[i] + w * fPadJ[i+1];
+}
+
+bool PrimaryGeneratorAction::SampleHemisphereCandidate(G4ThreeVector& dir) const
+{
+    // Physical fluence through the +z-facing source plane: pitch from J(alpha)*sin(alpha),
+    // gyrophase uniform over the forward half, accepted with probability cos(incidence).
+    // Only an accepted draw is a candidate -- the cos rejections are part of defining the
+    // fluence distribution, not samples of it.
+    static const G4double kHalfPi = std::acos(-1.0) / 2.0;
+    for (int guard = 0; guard < 1000000; ++guard) {
+        const G4double a   = SamplePitch() * deg;
+        const G4double phi = (2.*G4UniformRand() - 1.) * kHalfPi;
+        dir.set(std::sin(a)*std::sin(phi), std::cos(a), std::sin(a)*std::cos(phi));
+        if (G4UniformRand() <= dir.z()) return true;
+    }
+    return false;
+}
+
+bool PrimaryGeneratorAction::SamplePreConeCandidate(G4ThreeVector& dir, G4double halfAngleRad) const
+{
+    // Same fluence distribution as SampleHemisphereCandidate, restricted to a cone about
+    // +z: uniform in solid angle, accepted with probability J(alpha)/J_max * cos(theta).
+    // Inside the cone the density is therefore proportional to J*cos, identical in shape
+    // to the hemisphere sampler, which is what lets n_ref normalise it with no correction.
+    for (int guard = 0; guard < 1000000; ++guard) {
+        dir = SampleNarrowConeDir(halfAngleRad);
+        const G4double alphaDeg = std::acos(std::max(-1.0, std::min(1.0, dir.y()))) / deg;
+        if (G4UniformRand() * fPadJMax <= PadJ(alphaDeg) * dir.z()) return true;
+    }
+    return false;
+}
+
+bool PrimaryGeneratorAction::ReachesEnvelope(const G4ThreeVector& pos, const G4ThreeVector& dir,
+                                             G4double E_MeV) const
+{
+    // Would this proton's bent path enter the box enclosing the collimator and the tracker
+    // stack (outer half-width + margin, z from the collimator mouth to the back of the
+    // trigger stage)? Conservative on purpose: anything wrongly rejected here is lost
+    // silently, whereas a false accept only costs CPU. Bending is the small-angle parabola
+    // over the drift (B = +y bends protons toward -x); inside the ~4 m envelope the path
+    // is treated as straight (sagitta ~0.03 mm). The 100 mm default margin covers the
+    // detector tilt (a few mrad over 4 m) and the small-angle approximation.
+    static const G4double margin = [] {
+        const char* e = std::getenv("DIRECT_MARGIN_MM");
+        return (e ? std::atof(e) : 100.0) * mm;
+    }();
+    G4double zF = DetectorConstruction::GetCollZFront_mm() * mm;
+    G4double zB = DetectorConstruction::GetCollZBack_mm()  * mm;
+    if (zB <= zF) { zF = fZdet - 50.*mm; zB = fZdet + 1000.*mm; }   // no collimator built
+    const G4double R  = std::max({ DetectorConstruction::GetCollOuterHalfXY_mm(),
+                                   DetectorConstruction::GetActiveHalfX_mm(),
+                                   DetectorConstruction::GetActiveHalfY_mm() }) * mm + margin;
+    const G4double cx = fMeanDxBend_mm * mm;
+
+    const G4double p  = std::sqrt(E_MeV * (E_MeV + 2.*kMp_MeV));
+    const G4double rg = p / (299.792 * kBField_T) * m;
+    const G4double dz = zF - pos.z();
+    const G4double tx = dir.x() / dir.z(), ty = dir.y() / dir.z();
+    const G4double xF = pos.x() + tx * dz - dz * dz / (2. * rg);
+    const G4double yF = pos.y() + ty * dz;
+    const G4double txF = tx - dz / rg;
+
+    // Straight line x = x0 + t*s over s in [0, L]; shrink [sLo, sHi] per axis.
+    const G4double L = zB - zF;
+    G4double sLo = 0., sHi = L;
+    auto clip = [&](G4double x0, G4double t, G4double lo, G4double hi) {
+        if (std::abs(t) < 1e-15) { if (x0 < lo || x0 > hi) sHi = -1.; return; }
+        G4double s1 = (lo - x0) / t, s2 = (hi - x0) / t;
+        if (s1 > s2) std::swap(s1, s2);
+        sLo = std::max(sLo, s1);  sHi = std::min(sHi, s2);
+    };
+    clip(xF, txF, cx - R, cx + R);
+    clip(yF, ty, -R, R);
+    return sLo <= sHi;
+}
+
+void PrimaryGeneratorAction::GenerateCountedBeam(G4Event* event)
+{
+    // Draw candidates from the physical parent distribution until one qualifies for this
+    // run's SAMPLING mode, counting every candidate (and those in the reference cone) so
+    // the analysis can convert to real time. E, position and direction are ALL redrawn per
+    // candidate: fixing E once per event and looping over directions would make the fired
+    // energy spectrum ignore the (bending-dependent) acceptance.
+    const bool isOpen = (DetectorConstruction::GetMode() == DetectorConstruction::Mode::kImagingOpen);
+    const Sampling s  = GetSampling();
+    const G4double cosRef = std::cos(RefConeDeg() * deg);
+
+    unsigned long long nC = 0, nR = 0;
+    G4ThreeVector pos, dir;
+    G4double E = 0.;
+    bool fire = false;
+    for (unsigned long long guard = 0; guard < 2000000000ULL && !fire; ++guard) {
+        E = SampleEnergy();
+        pos.set((2.*G4UniformRand() - 1.) * fSrcHX, (2.*G4UniformRand() - 1.) * fSrcHX, fZsrc);
+        const bool ok = (s == Sampling::kDirect) ? SamplePreConeCandidate(dir, fDirectConeRad)
+                                                 : SampleHemisphereCandidate(dir);
+        if (!ok) continue;
+        ++nC;
+        if (dir.z() >= cosRef) ++nR;
+
+        const bool hitU = !isOpen && WouldHitUranium(pos, dir);
+        switch (s) {
+            case Sampling::kAll:     fire = true;                                          break;
+            case Sampling::kSplit:   fire = hitU || ReachesEnvelope(pos, dir, E);          break;
+            case Sampling::kDirect:  fire = !hitU && ReachesEnvelope(pos, dir, E);         break;
+            case Sampling::kUranium: fire = hitU;                                          break;
+            case Sampling::kLegacy:  fire = true;                                          break;
+        }
+    }
+    gNCand += nC;
+    gNRef  += nR;
+    if (!fire) {
+        G4Exception("PrimaryGeneratorAction::GenerateCountedBeam", "NoCandidate", JustWarning,
+                    "2e9 candidates without a qualifying proton; event left empty.");
+        return;
+    }
+
+    fGun->SetParticlePosition(pos);
+    fGun->SetParticleMomentumDirection(dir.unit());
+    fGun->SetParticleEnergy(E * MeV);
+    fGun->GeneratePrimaryVertex(event);
+    DumpBeamSample(pos.x(), pos.y(), pos.z(), E, dir.unit());
 }
 
 // Prescaled dump of every primary that is actually launched (after the cone cut and the

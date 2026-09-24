@@ -2,6 +2,7 @@
 /build/
 /build_viz/
 /build_sanity/
+/build_sampling/
 
 # Simulation output data (regenerated on the HPC side, not source)
 run_*/

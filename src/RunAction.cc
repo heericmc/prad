@@ -4,6 +4,9 @@
 #include "G4Threading.hh"
 #include "G4Run.hh"
 #include <fstream>
+#include <iomanip>
+#include "G4ios.hh"
+#include "Randomize.hh"
 
 std::ofstream* RunAction::sFile      = nullptr;
 G4Mutex        RunAction::sMutex     = G4MUTEX_INITIALIZER;
@@ -51,6 +54,7 @@ static const char* kHeaderStripHodo =
 void RunAction::BeginOfRunAction(const G4Run*)
 {
     if (!G4Threading::IsMasterThread()) return;
+    PrimaryGeneratorAction::ResetCounters();        // per-run candidate counts (imaging_all runs twice)
     if (PrimaryGeneratorAction::sVisMode) return;   // vis runs never touch production CSVs
 
     using Mode = DetectorConstruction::Mode;
@@ -93,17 +97,30 @@ void RunAction::EndOfRunAction(const G4Run* run)
         sWallFile = nullptr;
     }
 
+    // n_fired stays the first column so every existing reader (readtable(...).n_fired)
+    // keeps working. The rest is the real-time normalisation for the counted beams (see
+    // PrimaryGeneratorAction.hh): t_real = n_ref / (J_3D(90) * pi*sin^2(ref_cone) * A_src),
+    // A_src = (2*src_hx_mm)^2. Counts are 64-bit integers, written exactly.
+    auto writeStats = [&](const char* fname) {
+        std::ofstream stats(fname);
+        // seed last: byte-identical chunks (same seed) must be caught before merging
+        stats << "n_fired,n_cand,n_ref,ref_cone_deg,src_hx_mm,sampling,seed\n"
+              << run->GetNumberOfEvent() << ','
+              << PrimaryGeneratorAction::NCandidates() << ','
+              << PrimaryGeneratorAction::NRef() << ','
+              << std::setprecision(10) << PrimaryGeneratorAction::RefConeDeg() << ','
+              << DetectorConstruction::GetSrcHX_mm() << ','
+              << PrimaryGeneratorAction::SamplingName() << ','
+              << G4Random::getTheSeed() << '\n';
+    };
     using Mode = DetectorConstruction::Mode;
     switch (DetectorConstruction::GetMode()) {
-        case Mode::kImaging: {
-            std::ofstream stats("imaging_shadow_stats.csv");
-            stats << "n_fired\n" << run->GetNumberOfEvent() << '\n';
-            break;
-        }
-        case Mode::kImagingOpen: {
-            std::ofstream stats("imaging_open_stats.csv");
-            stats << "n_fired\n" << run->GetNumberOfEvent() << '\n';
-            break;
-        }
+        case Mode::kImaging:     writeStats("imaging_shadow_stats.csv"); break;
+        case Mode::kImagingOpen: writeStats("imaging_open_stats.csv");   break;
+        default: break;
     }
+    G4cout << "[Run] SAMPLING = " << PrimaryGeneratorAction::SamplingName()
+           << "  n_fired = " << run->GetNumberOfEvent()
+           << "  n_cand = " << PrimaryGeneratorAction::NCandidates()
+           << "  n_ref = "  << PrimaryGeneratorAction::NRef() << G4endl;
 }

@@ -39,8 +39,101 @@ science — this project shares only the imaging *technique* with that class of
 facility, none of the driven-experiment physics, and serves an unrelated purpose:
 orbital treaty-verification sensing, not weapons science.)
 
-**Current goal: statistics at 800 m standoff only.** See "Target: 800 m" below for the
-exact event counts to run — this is not a general multi-standoff sweep.
+**Current goal (2026-09-24): re-run every standoff (100/200/400/800/1600 m) with the new
+counted sampling scheme below.** Every shadow run taken before 2026-09-24 under-weights
+uranium scatter-in ~10x; its T is biased high and its t_5sigma biased low.
+
+## 2026-09-24: counted sampling scheme (`SAMPLING` env var) — READ FIRST
+
+### What was wrong with the old (legacy) shadow beam
+
+The legacy shadow run draws each proton from the full forward-hemisphere PAD. If the
+proton would hit the uranium it keeps that direction, which is correct. If it would miss,
+its direction is **redrawn into the 11.7 deg cone and it is fired anyway**. The analysis
+then treats every shadow event as one open-run event, i.e. one proton from the cone.
+The event count therefore follows the cone flux, but which events hit the uranium was
+decided with the hemisphere flux, which is Phi_hemi / (J_3D(90) * Omega_cone) = **10.0x**
+larger. So the uranium sees only 1/10 of its real hits, and so do scatter-in and
+punch-through. The direct (non-uranium) flux is correct, and so is the whole open run.
+
+Measured at 100 m against a brute-force run (`SAMPLING=all`, every proton fired at its
+true angle, nothing redirected or skipped):
+
+| per real second | legacy archive | brute force | new scheme |
+|---|---|---|---|
+| all shadow triggers | 205.9 +- 1.5 | 211.0 +- 4.8 | 215.8 +- 1.0 |
+| scatter-in (launch > 1.5 deg) | **0.76 +- 0.09** | 7.6 +- 0.9 | 6.2 +- 0.8 |
+| scatter-in in the +-229 mm cell | **0.27 +- 0.05** | 3.3 +- 0.6 | 1.9 +- 0.4 |
+| open field, all triggers | 232.6 +- 0.5 | 235.0 +- 5.0 | 233.9 +- 0.6 |
+
+Consequence at 100 m: T in the cell goes 0.476 -> 0.555 +- 0.015, t_5sigma 2.9 -> 4.0 s.
+This also explains the old 0.886 shadow/open global-efficiency warning at 100 m: ~11% of
+legacy shadow events are wide-angle uranium hits that almost never trigger.
+
+### The new scheme
+
+Every candidate is drawn from ONE physical parent distribution: uniform position on the
++-src_hx source plane, pitch from J(alpha)*sin(alpha), gyrophase over the forward
+hemisphere, cos-incidence accepted, AP9 energy (E >= 200 MeV). E, position and direction
+are all redrawn per candidate. A candidate that cannot matter is **counted and skipped,
+never redirected**. Each run counts all candidates (`n_cand`) and those inside a 1 deg
+reference cone about +z (`n_ref`; pitch 90 deg, where the PAD is flat), which gives its
+real-time equivalent from the trusted J_3D(90 deg) = 160.09 with no flux integral:
+
+    t_real = n_ref / (160.09 * pi*sin^2(ref_cone_deg) * (2*src_hx_mm/10)^2)   [s]
+
+| `SAMPLING=` | fires | use |
+|---|---|---|
+| `legacy` (default) | the old beam, unchanged (also counts n_cand/n_ref) | reproducing old archives only |
+| `direct` | candidates that do NOT hit the uranium and whose bent path reaches the collimator+tracker envelope (+100 mm margin, `DIRECT_MARGIN_MM`); drawn from a narrow pre-cone (`DIRECT_CONE_DEG`, default 2x the geometric reach) for speed | **production, open AND shadow** |
+| `uranium` | candidates that hit the uranium, at their true (any) angle, full hemisphere | **production, shadow only** (fatal in an open run) |
+| `split` | both of the above in one job, full hemisphere parent | small tests |
+| `all` | every candidate (brute force) | validation only |
+
+A shadow measurement is therefore TWO independent jobs, `direct` and `uranium`, each with
+its own `t_real`; the analysis weights each by t_open / t_own. Cost on a 20-thread laptop
+at 100 m: `direct` ~1000x faster per real second than brute force (e.g. 400 m: 5000 events
+= 8 s of real time); `uranium` ~0.5 core-hours per real second at ANY standoff (the
+uranium-hit rate per real second does not depend on standoff), i.e. it dominates the cost.
+Its contribution is ~10% of the shadow signal, so it can be run at a shorter real time
+than the direct part (e.g. t_uranium ~ t_direct / 3) at little cost in precision.
+
+### Stats file (every run)
+
+`imaging_{shadow,open}_stats.csv` is now
+`n_fired,n_cand,n_ref,ref_cone_deg,src_hx_mm,sampling,seed` (n_fired stays first, so old
+readers still work). Counts are exact 64-bit integers.
+
+### Running a counted campaign at one standoff
+
+```bash
+cd build
+SEED=<unique> SAMPLING=direct  ./MAIN imaging_open_<N/10>m_v3.mac   # open field
+SEED=<unique> SAMPLING=direct  ./MAIN imaging_<N/10>m_v3.mac        # shadow, direct part
+SEED=<unique> SAMPLING=uranium ./MAIN imaging_<N/10>m_v3.mac        # shadow, uranium part
+```
+
+Each writes the usual `imaging_open*.csv` / `imaging_shadow*.csv`; rename the uranium
+job's outputs to `imaging_shadow_uranium.csv` / `imaging_shadow_uranium_stats.csv`. The
+event counts in the old macros are sized for the legacy beam and are FAR too many for
+`direct` (nearly every `direct` event is a trigger candidate), so set `/run/beamOn` from a
+calibration chunk: pick the real time you want, then events = t_real_target / (t_real per
+event measured in the calibration).
+
+**Archive layout** (what the analysis expects), per standoff:
+`run_<N>m_2layer10cm_v3_collTubeTaper_11p7deg_counted/` holding
+`imaging_open.csv`, `imaging_open_stats.csv` (direct), `imaging_shadow.csv`,
+`imaging_shadow_stats.csv` (direct), `imaging_shadow_uranium.csv`,
+`imaging_shadow_uranium_stats.csv` (uranium).
+
+**Merging chunks:** concatenate CSV rows (one header), and in the stats file **sum
+`n_fired`, `n_cand` and `n_ref`** column by column; `ref_cone_deg`, `src_hx_mm` and
+`sampling` must be identical across chunks (refuse to merge otherwise). Never merge
+`direct` and `uranium` chunks together — they are different strata with different real
+times. **Before merging, check that every chunk's `seed` is distinct and that no two chunk
+CSVs are byte-identical (md5)**: in the 2026-09 HPC campaign all 64 shadow chunks at 100 m
+and at 1600 m were byte-identical (same seed), so those runs held only one chunk's worth
+of statistics.
 
 ## Build
 
@@ -61,7 +154,7 @@ physics input files (`diff_flux_AP9_i316.csv`, `run1.AP9.output_mean_flux.txt`) 
 
 1. **Standoff.** `src/DetectorConstruction.cc`, `ImagingDet::kStandoff` (search for
    `constexpr G4double kStandoff`) is currently checked in at `400.0 * m`. **Set it to
-   `800.0 * m`** before building — this is the single variable that sets the standoff;
+   the standoff you are about to run** (one build per standoff) before building — this is the single variable that sets the standoff;
    everything else (world size, source-plane geometry, alignment bending) derives from
    it automatically. Rebuild (`cmake --build build -j`) after changing it.
 2. **Thread count.** `MAIN.cc`, `mtRunManager->SetNumberOfThreads(18)` (around line 55)
@@ -81,7 +174,11 @@ sense run against a build with `kStandoff = 800.0 * m` as set above. Don't use t
 `_10m_`/`_20m_`/`_40m_` macros for this campaign; those are 100/200/400 m and belong to
 a separate sweep already running elsewhere.
 
-## Target: 800 m — how many particles
+## Target: 800 m — how many particles (SUPERSEDED 2026-09-24: legacy-beam campaign, kept for history)
+
+> The event counts below are for the legacy beam and its shadow runs under-weight
+> scatter-in ~10x. For new runs use the counted scheme above; size `/run/beamOn` from a
+> calibration chunk instead.
 
 This project has been running a production campaign (100 m -> 200 m -> 400 m) with an
 empirically-set doubling rule: **each time the standoff doubles, both the per-run event

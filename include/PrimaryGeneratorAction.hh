@@ -24,7 +24,42 @@ public:
     // events, plenty for the distributions and negligible for I/O.
     static long BeamDumpPrescale();
 
+    // 2026-09-24: candidate-counting source term (env SAMPLING), so a run's real-time
+    // equivalent can be recovered even when most sampled protons are never fired.
+    //   legacy  -- the 2026-09-10 collimator-aware beam, unchanged (default)
+    //   all     -- brute force: every candidate from the physical parent is fired
+    //   split   -- parent = full forward hemisphere; fire only candidates that hit the
+    //              uranium (shadow run) or whose bent path reaches the collimator+tracker
+    //              envelope; everything else is counted and skipped
+    //   direct  -- the "reaches the envelope, does not hit uranium" part only, drawn from
+    //              a narrow pre-cone (DIRECT_CONE_DEG) for speed
+    //   uranium -- the "hits the uranium" part only (shadow run), full hemisphere
+    // A candidate is one draw of (E, position, direction) from the physical fluence
+    // distribution (J(alpha) PAD, cos-incidence accepted). Every run also counts the
+    // candidates inside a small reference cone about +z (pitch 90 deg, where the PAD is
+    // flat), so the analysis gets absolute real time from the trusted J_3D(90 deg):
+    //     t_real = n_ref / (J_3D(90) * pi*sin^2(ref_cone) * A_src)
+    // (pi*sin^2 is the cos-weighted solid angle of the cone). No flux integral needed,
+    // and a pre-cone needs no correction factor as long as it contains the reference cone.
+    enum class Sampling { kLegacy, kAll, kSplit, kDirect, kUranium };
+    static Sampling    GetSampling();
+    static const char* SamplingName();
+    static G4double    RefConeDeg();
+    static void        ResetCounters();
+    static unsigned long long NCandidates();
+    static unsigned long long NRef();
+
 private:
+    bool          SampleHemisphereCandidate(G4ThreeVector& dir) const;   // PAD x gyrophase, cos-accepted
+    bool          SamplePreConeCandidate(G4ThreeVector& dir, G4double halfAngleRad) const;
+    G4double      PadJ(G4double alphaDeg) const;                        // J(alpha), E>=200, unnormalised
+    bool          ReachesEnvelope(const G4ThreeVector& pos, const G4ThreeVector& dir, G4double E_MeV) const;
+    void          GenerateCountedBeam(G4Event* event);
+
+    std::vector<G4double> fPadJ;                // J(alpha) on fPitchGrid (no sin factor)
+    G4double              fPadJMax = 0.;
+    G4double              fDirectConeRad = 0.;  // pre-cone half-angle for SAMPLING=direct
+
     void DumpBeamSample(G4double xs, G4double ys, G4double zs,
                         G4double E_MeV, const G4ThreeVector& dir) const;
 
