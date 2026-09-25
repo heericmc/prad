@@ -761,6 +761,30 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
     // face-tilt-across-its-width that matters here). Two styles, see Det::kCollStyle:
     // kLattice = CollV3's periodic square-hole lattice (below); kTube = CollTube's single
     // large square tube around the tracker's whole perimeter (further below).
+    // 2026-09-24: detector envelope. Every collimator + tracker + trigger-stage volume is
+    // placed inside this one unrotated G4_Galactic box instead of directly in the world, so
+    // the world holds only the envelope and the uranium (or its placeholder). With ~1700
+    // daughters sitting at one end of a standoff-long world, each step of a proton's long
+    // empty flight paid for navigating that crowd: SAMPLING=direct cost 0.8 ms/event at
+    // 400 m but ~24 ms at 800 m. Physics-inert (vacuum inside vacuum); hits are recorded
+    // in global coordinates and copy numbers at depth 0, so no output changes. Sized from
+    // the collimator mouth to the back of the trigger stage with 300 mm of slack in z and
+    // 100 mm in x/y (the world keeps >= 150 mm beyond the collimator's outer face).
+    const G4double collHalfZEnv = !Det::kHasCollimator ? 0.0
+        : (Det::kCollStyle == Det::CollStyle::kTube ? CollTube::kCollHalfZ : CollV3::kCollHalfZ);
+    const G4double stackBackEnv = DetectorConstruction::kUseStripHodoscope
+        ? (stripY_z + StripHodo::kHalfZ) : (scint_z + Det::kScint_HalfZ);
+    const G4double envLoZ = zSiPlane[0] - 2.0 * collHalfZEnv - 300.0 * mm;
+    const G4double envHiZ = stackBackEnv + 300.0 * mm;
+    const G4double envHXY = std::max({ collOuterHalfXY, hx, hy }) + 100.0 * mm;
+    const G4ThreeVector envC(detOffset_x, 0, 0.5 * (envLoZ + envHiZ));
+    auto* envLV = new G4LogicalVolume(
+        new G4Box("DetEnvelope", envHXY, envHXY, 0.5 * (envHiZ - envLoZ)),
+        vac, "DetEnvelopeLV");
+    envLV->SetVisAttributes(new G4VisAttributes(false));
+    new G4PVPlacement(nullptr, envC, envLV, "DetEnvelopePV", worldLV, false, 0, true);
+    auto envPos = [&](const G4ThreeVector& p) { return p - envC; };   // world -> envelope frame
+
     if (Det::kHasCollimator && Det::kCollStyle == Det::CollStyle::kLattice) {
         const G4double collClear = CollV3::kCollHalfX * std::sin(theta_rad) + 0.05 * mm;
         const G4double zCollDownstream = zSiPlane[0] - Det::kSiHalfZ - kSensorFront
@@ -790,8 +814,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         auto* collSolid = new G4SubtractionSolid("V3Collimator", collBlock, holesUnion);
         auto* collLV = new G4LogicalVolume(collSolid, collMat, "V3CollimatorLV");
         collLV->SetVisAttributes(hdpeVis);
-        new G4PVPlacement(detRot, G4ThreeVector(detOffset_x, 0, zColl), collLV,
-                          "V3CollimatorPV", worldLV, false, 0, true);
+        new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x, 0, zColl)), collLV,
+                          "V3CollimatorPV", envLV, false, 0, true);
 
         G4cout << "[Det] v3 collimator: " << (CollV3::kAlCollimator ? "Al" : "HDPE") << ", "
                << CollV3::kNHolesX << "x" << CollV3::kNHolesY
@@ -909,8 +933,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
             lv->SetVisAttributes(vis);
             // Every zone shares the SAME PV name (TrackerSD's planeID lookup keys on name,
             // not copy number) so the wall-hit investigation sees the whole taper as one.
-            new G4PVPlacement(detRot, G4ThreeVector(detOffset_x, 0, zCentre), lv,
-                              "V3CollimatorTubePV", worldLV, false, iz, true);
+            new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x, 0, zCentre)), lv,
+                              "V3CollimatorTubePV", envLV, false, iz, true);
             fCollTubeWallZones_LV.push_back(lv);
 
             G4cout << "[Det]   tube zone " << iz << ": " << thickFrac*100 << "% ("
@@ -947,7 +971,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         // Continuous 400 um K13D2U cold-plate sheet (touching 34 mm cells -> full area).
         auto* colLV = new G4LogicalVolume(new G4Box("Cold"+s, hx, hy, Det::kColdHalfZ), k13d2u, "ColdLV"+s);
         colLV->SetVisAttributes(coldVis);
-        new G4PVPlacement(detRot, G4ThreeVector(detOffset_x, 0, zCol), colLV, "Cold"+s+"PV", worldLV, false, 0, true);
+        new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x, 0, zCol)), colLV, "Cold"+s+"PV", envLV, false, 0, true);
 
         // Per-stave sensor stack (30 x 150 mm) plus two 2 mm legs at the cold-plate edges.
         // The sensor sub-slabs tile in y at the 160 mm pitch, leaving kRowGapY (10 mm) of
@@ -964,14 +988,14 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
 
         for (G4int i = 0; i < Det::kNStaveX; ++i) {
             const G4double xc = (i - (Det::kNStaveX - 1) / 2.) * Det::kStavePitchX;  // stave centre
-            new G4PVPlacement(detRot, G4ThreeVector(detOffset_x + xc + xLeg, 0, zLeg), legLV, "Leg"+s+"PV", worldLV, false, 2*i,   false);
-            new G4PVPlacement(detRot, G4ThreeVector(detOffset_x + xc - xLeg, 0, zLeg), legLV, "Leg"+s+"PV", worldLV, false, 2*i+1, false);
+            new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x + xc + xLeg, 0, zLeg)), legLV, "Leg"+s+"PV", envLV, false, 2*i,   false);
+            new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x + xc - xLeg, 0, zLeg)), legLV, "Leg"+s+"PV", envLV, false, 2*i+1, false);
             for (G4int j = 0; j < Det::kNStaveY; ++j) {
                 const G4double yc = (j - (Det::kNStaveY - 1) / 2.) * Det::kStavePitchY;  // row centre
                 const G4int    cp = i * Det::kNStaveY + j;                               // unique copy no.
-                new G4PVPlacement(detRot, G4ThreeVector(detOffset_x + xc, yc, zKap), kapLV,   "Kapton"+s+"PV", worldLV, false, cp, false);
-                new G4PVPlacement(detRot, G4ThreeVector(detOffset_x + xc, yc, zCu ), cuLV,    "Cu"+s+"PV",     worldLV, false, cp, false);
-                new G4PVPlacement(detRot, G4ThreeVector(detOffset_x + xc, yc, zSi ), siLV[L], "SSD"+s+"PV",    worldLV, false, cp, false);
+                new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x + xc, yc, zKap)), kapLV,   "Kapton"+s+"PV", envLV, false, cp, false);
+                new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x + xc, yc, zCu )), cuLV,    "Cu"+s+"PV",     envLV, false, cp, false);
+                new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x + xc, yc, zSi )), siLV[L], "SSD"+s+"PV",    envLV, false, cp, false);
             }
         }
     }
@@ -995,8 +1019,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         fStripX_LV->SetVisAttributes(stripXVis);
         for (G4int i = 0; i < StripHodo::kNStripsX; ++i) {
             const G4double xc = (i - (StripHodo::kNStripsX - 1) / 2.) * StripHodo::kPitch;
-            new G4PVPlacement(detRot, G4ThreeVector(detOffset_x + xc, 0, stripX_z),
-                              fStripX_LV, "StripXPV", worldLV, false, i, false);
+            new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x + xc, 0, stripX_z)),
+                              fStripX_LV, "StripXPV", envLV, false, i, false);
         }
 
         fStripY_LV = new G4LogicalVolume(
@@ -1005,8 +1029,8 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         fStripY_LV->SetVisAttributes(stripYVis);
         for (G4int j = 0; j < StripHodo::kNStripsY; ++j) {
             const G4double yc = (j - (StripHodo::kNStripsY - 1) / 2.) * StripHodo::kPitch;
-            new G4PVPlacement(detRot, G4ThreeVector(detOffset_x, yc, stripY_z),
-                              fStripY_LV, "StripYPV", worldLV, false, j, false);
+            new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x, yc, stripY_z)),
+                              fStripY_LV, "StripYPV", envLV, false, j, false);
         }
 
         G4cout << "[Det] strip hodoscope: " << StripHodo::kNStripsX << " x-strips + "
@@ -1023,16 +1047,16 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         // independently.
         fPoly_LV = new G4LogicalVolume(
             new G4Box("Poly", hx, hy, Det::kPoly_HalfZ), poly, "PolyLV");
-        new G4PVPlacement(detRot, G4ThreeVector(detOffset_x, 0, poly_z),
-                          fPoly_LV, "PolyPV", worldLV, false, 0, true);
+        new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x, 0, poly_z)),
+                          fPoly_LV, "PolyPV", envLV, false, 0, true);
         auto* polyVis = new G4VisAttributes(G4Colour(0.5, 0.8, 1.0, 0.4));
         polyVis->SetForceSolid(true);
         fPoly_LV->SetVisAttributes(polyVis);
 
         fScint_LV = new G4LogicalVolume(
             new G4Box("Scint", hx, hy, Det::kScint_HalfZ), scintMat, "ScintLV");
-        new G4PVPlacement(detRot, G4ThreeVector(detOffset_x, 0, scint_z),
-                          fScint_LV, "ScintPV", worldLV, false, 0, true);
+        new G4PVPlacement(detRot, envPos(G4ThreeVector(detOffset_x, 0, scint_z)),
+                          fScint_LV, "ScintPV", envLV, false, 0, true);
         auto* scintVis = new G4VisAttributes(G4Colour(1.0, 1.0, 0.2, 0.9));
         scintVis->SetForceSolid(true);
         fScint_LV->SetVisAttributes(scintVis);
