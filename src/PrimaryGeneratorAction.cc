@@ -171,8 +171,11 @@ PrimaryGeneratorAction::PrimaryGeneratorAction()
         const G4double pMin   = std::sqrt(200. * (200. + 2.*kMp_MeV));
         const G4double rgMin  = pMin / (299.792 * kBField_T) * m;
         const G4double bend   = d * d / (2. * rgMin);
-        const G4double geoMax = std::atan((std::sqrt(2.) * fSrcHX + std::abs(fMeanDxBend_mm) * mm
-                                           + envR + 100.*mm + bend) / d);
+        // farthest source corner to the far corner of the (margin-grown) envelope, in x
+        // (which also carries the detector offset and the bend) and y separately
+        const G4double reachX = fSrcHX + std::abs(fMeanDxBend_mm) * mm + envR + 100.*mm + bend;
+        const G4double reachY = fSrcHX + envR + 100.*mm;
+        const G4double geoMax = std::atan(std::hypot(reachX, reachY) / d);
         const G4double refRad = RefConeDeg() * deg;
         const char* dc = std::getenv("DIRECT_CONE_DEG");
         fDirectConeRad = dc ? std::atof(dc) * deg : std::max(2.0 * geoMax, 1.25 * refRad);
@@ -671,6 +674,11 @@ void PrimaryGeneratorAction::GenerateCountedBeam(G4Event* event)
     const bool isOpen = (DetectorConstruction::GetMode() == DetectorConstruction::Mode::kImagingOpen);
     const Sampling s  = GetSampling();
     const G4double cosRef = std::cos(RefConeDeg() * deg);
+    // Checked here too, not only in the constructor: imaging_all switches to the open run
+    // after construction, and with no uranium no candidate could ever qualify.
+    if (s == Sampling::kUranium && isOpen)
+        G4Exception("PrimaryGeneratorAction::GenerateCountedBeam", "UraniumInOpen", FatalException,
+                    "SAMPLING=uranium in an open-field run (e.g. the open half of imaging_all).");
 
     unsigned long long nC = 0, nR = 0;
     G4ThreeVector pos, dir;
