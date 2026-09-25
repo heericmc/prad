@@ -674,6 +674,19 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
         auto* uVis = new G4VisAttributes(G4Colour(0.8, 0.6, 0.1, 0.9));
         uVis->SetForceSolid(true);
         uLV->SetVisAttributes(uVis);
+    } else if (sMode == Mode::kImagingOpen) {
+        // 2026-09-24: vacuum placeholder at the uranium position in the open run. Physically
+        // inert (G4_Galactic, same as the world), but it gives the world's smart voxels a
+        // daughter at the far (-z) end. Without it every daughter sits at the detector end
+        // of the ~standoff-long world, and a proton crossing the empty stretch paid for
+        // navigating hundreds of tracker volumes on every step: SAMPLING=direct open runs
+        // were ~20x slower per event than the shadow runs (400 m: 17.5 vs 0.8 ms/event).
+        auto* phLV = new G4LogicalVolume(
+            new G4Box("UraniumPlaceholder", UraniumDet::kHalfX, UraniumDet::kHalfY, UraniumDet::kHalfZ),
+            nist->FindOrBuildMaterial("G4_Galactic"), "UraniumPlaceholderLV");
+        new G4PVPlacement(nullptr, G4ThreeVector(0, 0, ImagingDet::kUraniumZ),
+                          phLV, "UraniumPlaceholderPV", worldLV, false, 0, true);
+        phLV->SetVisAttributes(new G4VisAttributes(false));
     }
 
     // Tracker: 3 MAPS layers (ALTAI staves), 20 mm apart.
